@@ -1,0 +1,5 @@
+# WebSocket support (loaded inside http{} via /etc/nginx/conf.d/*.conf)
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  ''      close;
+}

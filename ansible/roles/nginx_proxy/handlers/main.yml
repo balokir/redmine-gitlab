@@ -1,4 +1,10 @@
 - name: reload nginx
-  service:
-    name: nginx
-    state: reloaded
+  block:
+    - name: nginx config test
+      command: nginx -t
+      changed_when: false
+
+    - name: reload nginx
+      service:
+        name: nginx
+        state: reloaded

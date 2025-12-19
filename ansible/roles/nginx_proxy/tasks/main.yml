@@ -1,3 +1,11 @@
+# Patched nginx_proxy role
+# Improvements:
+# - Shared snippets for SSL + proxy headers
+# - WebSocket upgrade map (conf.d drop-in)
+# - Safer reload handler (nginx -t before reload)
+# - Idempotent enabling with force
+# - Optional TLS mode: selfsigned|mkcert|provided (defaults to selfsigned)
+
 - name: Install nginx and openssl
   apt:
     name:
@@ -5,13 +13,40 @@
       - openssl
     update_cache: true
 
-- name: Create ssl directory
+- name: Ensure nginx directories exist
   file:
-    path: /etc/nginx/ssl
+    path: "{{ item }}"
     state: directory
     mode: "0755"
+  loop:
+    - /etc/nginx/ssl
+    - /etc/nginx/snippets
+    - /etc/nginx/sites-available
+    - /etc/nginx/sites-enabled
+    - /etc/nginx/conf.d
 
-- name: Create self-signed TLS cert (lab)
+- name: Install WebSocket upgrade map (http context)
+  template:
+    src: upgrade-map.conf.j2
+    dest: /etc/nginx/conf.d/00-upgrade-map.conf
+    mode: "0644"
+  notify: reload nginx
+
+- name: Install common proxy headers snippet
+  template:
+    src: proxy_common.conf.j2
+    dest: /etc/nginx/snippets/proxy_common.conf
+    mode: "0644"
+  notify: reload nginx
+
+- name: Install common SSL snippet
+  template:
+    src: ssl_common.conf.j2
+    dest: /etc/nginx/snippets/ssl_common.conf
+    mode: "0644"
+  notify: reload nginx
+
+- name: Create self-signed TLS cert (lab) when tls_mode=selfsigned
   command: >
     openssl req -x509 -nodes -newkey rsa:2048
     -keyout {{ nginx_tls_key_path }}
@@ -20,8 +55,101 @@
     -subj "/CN={{ redmine_domain }}"
   args:
     creates: "{{ nginx_tls_cert_path }}"
+  when: (tls_mode | default('selfsigned')) == 'selfsigned'
+  notify: reload nginx
 
-- name: Remove default site
+- name: Ensure mkcert local directory exists (on control host)
+  delegate_to: localhost
+  run_once: true
+  file:
+    path: "{{ mkcert_local_dir }}"
+    state: directory
+    mode: "0755"
+  when: (tls_mode | default('selfsigned')) == 'mkcert'
+
+- name: Ensure mkcert CA is installed (one-time, on control host)
+  delegate_to: localhost
+  run_once: true
+  command: mkcert -install
+  register: mkcert_install
+  changed_when: "'already installed' not in ((mkcert_install.stdout | default('')) ~ (mkcert_install.stderr | default('')))"
+  failed_when: mkcert_install.rc != 0
+  when: (tls_mode | default('selfsigned')) == 'mkcert'
+
+- name: Build mkcert domain fingerprint (sorted)
+  delegate_to: localhost
+  run_once: true
+  set_fact:
+    mkcert_domains_sorted: "{{ mkcert_domains | map('trim') | list | sort }}"
+    mkcert_fingerprint: "{{ (mkcert_domains | map('trim') | list | sort | join('\\n')) | hash('sha256') }}"
+  when: (tls_mode | default('selfsigned')) == 'mkcert'
+
+- name: Read previous mkcert fingerprint (if any)
+  delegate_to: localhost
+  run_once: true
+  slurp:
+    src: "{{ mkcert_local_dir }}/domains.sha256"
+  register: mkcert_prev_fp
+  ignore_errors: true
+  when: (tls_mode | default('selfsigned')) == 'mkcert'
+
+- name: Decide if mkcert regeneration is needed
+  delegate_to: localhost
+  run_once: true
+  set_fact:
+    mkcert_regen_needed: >-
+      {{
+        (mkcert_prev_fp is failed)
+        or ((mkcert_prev_fp.content | default('') | b64decode | trim) != mkcert_fingerprint)
+        or (not lookup('ansible.builtin.fileglob', mkcert_local_dir + '/lab.crt', wantlist=True) | length)
+        or (not lookup('ansible.builtin.fileglob', mkcert_local_dir + '/lab.key', wantlist=True) | length)
+      }}
+  when: (tls_mode | default('selfsigned')) == 'mkcert'
+
+- name: Generate mkcert cert/key for lab domains (on control host) if needed
+  delegate_to: localhost
+  run_once: true
+  command: >
+    mkcert
+    -cert-file "{{ mkcert_local_dir }}/lab.crt"
+    -key-file  "{{ mkcert_local_dir }}/lab.key"
+    {{ mkcert_domains_sorted | join(' ') }}
+  when:
+    - (tls_mode | default('selfsigned')) == 'mkcert'
+    - mkcert_regen_needed | bool
+
+- name: Write mkcert fingerprint file (on control host)
+  delegate_to: localhost
+  run_once: true
+  copy:
+    dest: "{{ mkcert_local_dir }}/domains.sha256"
+    content: "{{ mkcert_fingerprint }}\n"
+    mode: "0644"
+  when:
+    - (tls_mode | default('selfsigned')) == 'mkcert'
+    - mkcert_regen_needed | bool
+
+- name: Copy mkcert certificate to nginx VM
+  copy:
+    src: "{{ mkcert_local_dir }}/lab.crt"
+    dest: "{{ nginx_tls_cert_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: (tls_mode | default('selfsigned')) == 'mkcert'
+  notify: reload nginx
+
+- name: Copy mkcert key to nginx VM
+  copy:
+    src: "{{ mkcert_local_dir }}/lab.key"
+    dest: "{{ nginx_tls_key_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: (tls_mode | default('selfsigned')) == 'mkcert'
+  notify: reload nginx
+
+- name: Remove default site (if present)
   file:
     path: /etc/nginx/sites-enabled/default
     state: absent
@@ -39,6 +167,7 @@
     src: /etc/nginx/sites-available/redmine.conf
     dest: /etc/nginx/sites-enabled/redmine.conf
     state: link
+    force: true
   notify: reload nginx
 
 - name: Install GitLab vhost
@@ -53,6 +182,7 @@
     src: /etc/nginx/sites-available/gitlab.conf
     dest: /etc/nginx/sites-enabled/gitlab.conf
     state: link
+    force: true
   notify: reload nginx
 
 - name: Test nginx config

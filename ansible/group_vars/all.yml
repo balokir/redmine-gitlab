@@ -27,6 +27,20 @@ gitlab_external_url: "http://{{ gitlab_domain }}" # nginx handles TLS; GitLab se
 gitlab_ssh_port: 2222
 trusted_proxy_cidr: "192.168.56.0/24"
 
-# TLS on nginx-proxy (self-signed by default for lab)
+tls_mode: mkcert
+
+# Generate one SAN cert that covers both hostnames
+mkcert_domains:
+  - "{{ redmine_domain }}"
+  - "{{ gitlab_domain }}"
+
+# Where to store generated certs on your host (control machine)
+mkcert_local_dir: "{{ playbook_dir }}/.mkcert"
+
+# TLS on nginx-proxy
 nginx_tls_cert_path: "/etc/nginx/ssl/lab.crt"
 nginx_tls_key_path: "/etc/nginx/ssl/lab.key"
+
+
+# Optional HSTS for local labs (off by default). Enable via: hsts_enabled: true
+hsts_enabled: true

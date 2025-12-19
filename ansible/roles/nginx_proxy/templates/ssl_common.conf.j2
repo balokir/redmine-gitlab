@@ -1,0 +1,10 @@
+# TLS baseline (lab-friendly but sane)
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_prefer_server_ciphers off;
+ssl_session_cache shared:SSL:10m;
+ssl_session_timeout 10m;
+
+# Optional HSTS for local labs (off by default). Enable via: hsts_enabled: true
+{% if hsts_enabled | default(false) %}
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+{% endif %}
