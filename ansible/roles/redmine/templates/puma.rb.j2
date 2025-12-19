@@ -1,0 +1,11 @@
+directory "{{ redmine_root }}"
+environment "production"
+
+bind "tcp://0.0.0.0:{{ redmine_upstream_port }}"
+workers 1
+threads 2, 8
+
+pidfile "{{ redmine_root }}/tmp/pids/puma.pid"
+state_path "{{ redmine_root }}/tmp/pids/puma.state"
+
+stdout_redirect "{{ redmine_root }}/log/puma.stdout.log", "{{ redmine_root }}/log/puma.stderr.log", true

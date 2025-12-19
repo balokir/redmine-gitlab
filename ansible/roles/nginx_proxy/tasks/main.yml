@@ -1,0 +1,66 @@
+- name: Install nginx and openssl
+  apt:
+    name:
+      - nginx
+      - openssl
+    update_cache: true
+
+- name: Create ssl directory
+  file:
+    path: /etc/nginx/ssl
+    state: directory
+    mode: "0755"
+
+- name: Create self-signed TLS cert (lab)
+  command: >
+    openssl req -x509 -nodes -newkey rsa:2048
+    -keyout {{ nginx_tls_key_path }}
+    -out {{ nginx_tls_cert_path }}
+    -days 365
+    -subj "/CN={{ redmine_domain }}"
+  args:
+    creates: "{{ nginx_tls_cert_path }}"
+
+- name: Remove default site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload nginx
+
+- name: Install Redmine vhost
+  template:
+    src: redmine.conf.j2
+    dest: /etc/nginx/sites-available/redmine.conf
+    mode: "0644"
+  notify: reload nginx
+
+- name: Enable Redmine vhost
+  file:
+    src: /etc/nginx/sites-available/redmine.conf
+    dest: /etc/nginx/sites-enabled/redmine.conf
+    state: link
+  notify: reload nginx
+
+- name: Install GitLab vhost
+  template:
+    src: gitlab.conf.j2
+    dest: /etc/nginx/sites-available/gitlab.conf
+    mode: "0644"
+  notify: reload nginx
+
+- name: Enable GitLab vhost
+  file:
+    src: /etc/nginx/sites-available/gitlab.conf
+    dest: /etc/nginx/sites-enabled/gitlab.conf
+    state: link
+  notify: reload nginx
+
+- name: Test nginx config
+  command: nginx -t
+  changed_when: false
+
+- name: Ensure nginx is running
+  service:
+    name: nginx
+    state: started
+    enabled: true

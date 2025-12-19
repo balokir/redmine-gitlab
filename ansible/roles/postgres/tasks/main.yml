@@ -1,0 +1,47 @@
+- name: Install PostgreSQL and python driver
+  apt:
+    name:
+      - postgresql
+      - postgresql-contrib
+      - python3-psycopg2
+    update_cache: true
+
+- name: Ensure PostgreSQL is running
+  service:
+    name: postgresql
+    state: started
+    enabled: true
+
+- name: Create Redmine DB user
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: "{{ redmine_db_user }}"
+    password: "{{ redmine_db_password }}"
+    state: present
+
+- name: Create Redmine database
+  become_user: postgres
+  community.postgresql.postgresql_db:
+    name: "{{ redmine_db_name }}"
+    owner: "{{ redmine_db_user }}"
+    encoding: "UTF8"
+    state: present
+
+- name: Allow LAN connections (listen on all)
+  shell: |
+    set -e
+    CONF=$(ls -1 /etc/postgresql/*/main/postgresql.conf | head -n 1)
+    sed -i "s/^#\?listen_addresses\s*=.*/listen_addresses = '*'/" "$CONF"
+  args:
+    executable: /bin/bash
+  notify: restart postgresql
+
+- name: Allow Redmine VM to connect (pg_hba)
+  shell: |
+    set -e
+    HBA=$(ls -1 /etc/postgresql/*/main/pg_hba.conf | head -n 1)
+    LINE="host {{ redmine_db_name }} {{ redmine_db_user }} 192.168.56.0/24 md5"
+    grep -qxF "$LINE" "$HBA" || echo "$LINE" >> "$HBA"
+  args:
+    executable: /bin/bash
+  notify: restart postgresql

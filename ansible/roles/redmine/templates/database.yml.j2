@@ -1,0 +1,8 @@
+production:
+  adapter: postgresql
+  database: {{ redmine_db_name }}
+  host: {{ postgres_host }}
+  port: {{ postgres_port }}
+  username: {{ redmine_db_user }}
+  password: "{{ redmine_db_password }}"
+  encoding: utf8

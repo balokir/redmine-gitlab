@@ -1,0 +1,16 @@
+[Unit]
+Description=Redmine (Puma)
+After=network.target
+
+[Service]
+Type=simple
+User={{ redmine_user }}
+Group={{ redmine_group }}
+WorkingDirectory={{ redmine_root }}
+Environment=RAILS_ENV=production
+ExecStart=/usr/bin/bash -lc 'cd {{ redmine_root }} && bundle exec puma -C config/puma.rb'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

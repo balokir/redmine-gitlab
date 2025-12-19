@@ -1,0 +1,19 @@
+external_url "{{ gitlab_external_url }}"
+
+# We are behind an external nginx reverse proxy, so disable bundled nginx
+nginx['enable'] = false
+
+# Make GitLab web listen on a non-privileged port on the LAN
+gitlab_workhorse['listen_network'] = "tcp"
+gitlab_workhorse['listen_addr'] = "0.0.0.0:{{ gitlab_upstream_port }}"
+
+# Tell Rails we are behind proxy and what proxies to trust
+gitlab_rails['trusted_proxies'] = ['{{ trusted_proxy_cidr }}']
+gitlab_rails['gitlab_https'] = false
+
+# SSH settings (users connect via proxy/port-forward if needed)
+gitlab_rails['gitlab_shell_ssh_port'] = {{ gitlab_ssh_port }}
+
+# Optional: reduce resource usage for lab
+puma['worker_processes'] = 2
+sidekiq['max_concurrency'] = 10

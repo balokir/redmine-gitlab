@@ -1,0 +1,156 @@
+- name: Install dependencies (Ruby, build tools, libs)
+  apt:
+    name:
+      - git
+      - build-essential
+      - libpq-dev
+      - zlib1g-dev
+      - libssl-dev
+      - libreadline-dev
+      - libyaml-dev
+      - libxml2-dev
+      - libxslt1-dev
+      - libcurl4-openssl-dev
+      - libffi-dev
+      - libgdbm-dev
+      - libncurses5-dev
+      - libtool
+      - bison
+      - pkg-config
+      - imagemagick
+      - ruby-full
+      - ruby-dev
+      - tzdata
+    update_cache: true
+
+- name: Ensure redmine group exists
+  group:
+    name: "{{ redmine_group }}"
+    state: present
+
+- name: Ensure redmine user exists
+  user:
+    name: "{{ redmine_user }}"
+    group: "{{ redmine_group }}"
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Create Redmine root dir
+  file:
+    path: "{{ redmine_root }}"
+    state: directory
+    owner: "{{ redmine_user }}"
+    group: "{{ redmine_group }}"
+    mode: "0755"
+
+- name: Download Redmine tarball
+  get_url:
+    url: "https://www.redmine.org/releases/redmine-{{ redmine_version }}.tar.gz"
+    dest: "/tmp/redmine-{{ redmine_version }}.tar.gz"
+    mode: "0644"
+
+- name: Extract Redmine
+  unarchive:
+    src: "/tmp/redmine-{{ redmine_version }}.tar.gz"
+    dest: "{{ redmine_root }}"
+    remote_src: true
+    extra_opts: [--strip-components=1]
+  args:
+    creates: "{{ redmine_root }}/Gemfile"
+
+- name: Ensure tmp and log dirs exist
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ redmine_user }}"
+    group: "{{ redmine_group }}"
+    mode: "0755"
+  loop:
+    - "{{ redmine_root }}/tmp"
+    - "{{ redmine_root }}/tmp/pids"
+    - "{{ redmine_root }}/tmp/cache"
+    - "{{ redmine_root }}/log"
+
+- name: Set ownership
+  file:
+    path: "{{ redmine_root }}"
+    state: directory
+    recurse: true
+    owner: "{{ redmine_user }}"
+    group: "{{ redmine_group }}"
+
+- name: Install bundler
+  gem:
+    name: bundler
+    state: present
+
+- name: Write database.yml
+  template:
+    src: database.yml.j2
+    dest: "{{ redmine_root }}/config/database.yml"
+    owner: "{{ redmine_user }}"
+    group: "{{ redmine_group }}"
+    mode: "0640"
+  notify: restart redmine
+
+- name: Write configuration.yml
+  template:
+    src: configuration.yml.j2
+    dest: "{{ redmine_root }}/config/configuration.yml"
+    owner: "{{ redmine_user }}"
+    group: "{{ redmine_group }}"
+    mode: "0640"
+  notify: restart redmine
+
+- name: Write puma.rb
+  template:
+    src: puma.rb.j2
+    dest: "{{ redmine_root }}/config/puma.rb"
+    owner: "{{ redmine_user }}"
+    group: "{{ redmine_group }}"
+    mode: "0644"
+  notify: restart redmine
+
+- name: Install gems (production)
+  become_user: "{{ redmine_user }}"
+  command: >
+    bash -lc "cd {{ redmine_root }} &&
+    bundle config set --local without 'development test' &&
+    bundle config set --local path vendor/bundle &&
+    bundle install"
+  args:
+    creates: "{{ redmine_root }}/vendor/bundle"
+
+- name: Generate secret token
+  become_user: "{{ redmine_user }}"
+  command: bash -lc "cd {{ redmine_root }} && bundle exec rake generate_secret_token"
+  args:
+    creates: "{{ redmine_root }}/config/initializers/secret_token.rb"
+
+- name: Run DB migrations
+  become_user: "{{ redmine_user }}"
+  command: bash -lc "cd {{ redmine_root }} && RAILS_ENV=production bundle exec rake db:migrate"
+  register: migrate_out
+  changed_when: "'Migrating' in migrate_out.stdout or migrate_out.rc == 0"
+
+- name: Precompile assets
+  become_user: "{{ redmine_user }}"
+  command: bash -lc "cd {{ redmine_root }} && RAILS_ENV=production bundle exec rake assets:precompile"
+  args:
+    creates: "{{ redmine_root }}/public/assets"
+
+- name: Install systemd service
+  template:
+    src: redmine.service.j2
+    dest: /etc/systemd/system/redmine.service
+    mode: "0644"
+  notify:
+    - daemon-reload
+    - restart redmine
+
+- name: Enable and start Redmine
+  systemd:
+    name: redmine
+    state: started
+    enabled: true

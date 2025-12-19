@@ -1,0 +1,19 @@
+- name: Postgres
+  hosts: postgres
+  roles:
+    - postgres
+
+- name: Redmine (systemd service, no Docker)
+  hosts: redmine
+  roles:
+    - redmine
+
+- name: GitLab Omnibus (behind reverse proxy)
+  hosts: gitlab
+  roles:
+    - gitlab
+
+- name: Nginx reverse proxy
+  hosts: nginx
+  roles:
+    - nginx_proxy
